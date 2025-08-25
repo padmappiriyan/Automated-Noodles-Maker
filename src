@@ -1,0 +1,21 @@
+Automated Maggie Making Machine with Enhanced Functionality  
+Problem Statement:   
+In today's fast-paced lifestyle, people often find it challenging to prepare meals that are both quick and satisfying. The traditional method of cooking maggie noodles requires constant monitoring and manual intervention, which can be time-consuming and prone to errors. Additionally, there is a growing demand for automation in kitchen appliances to make cooking more convenient and efficient.  
+Solution:  
+To address these challenges, an automated maggie making machine is proposed. This machine aims to provide a solution that automates the process of cooking maggie noodles, offering precise control over cooking parameters such as water temperature, quantity of noodles, and cooking time. By incorporating advanced sensors and motors, this machine can ensure consistent and perfectly cooked noodles every time, saving time and effort for users.  
+   
+  
+Components:  
+-	Arduino Board:    To control the overall operation of the machine.  
+-	Temperature Sensor:    To monitor the water temperature for cooking noodles.  
+-	Water Level Sensor:     To ensure the correct amount of water is added.  
+-	Weight Sensor:    To measure the quantity of noodles and water accurately.  
+-	IR Sensor:    To detect the presence of the cooking vessel and prevent operation if the vessel is not placed correctly.  
+-	Stirrer Motor:   To stir the noodles while cooking.  
+-	Servo Motor:    To dispense masala (seasoning) packet  
+-	LCD Display with Touch Screen  
+  
+Features:  
+	Precise Ingredient Measurement: The machine will measure the quantity of noodles and water accurately using the weight sensor.  
+  
+	Automatic Ingredient Dispensing: The servo motor will dispense the masala packet automatically.  
