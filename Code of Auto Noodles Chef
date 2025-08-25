@@ -1,0 +1,381 @@
+#include <LiquidCrystal_I2C.h>
+#include <Keypad.h>
+#include <Servo.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+
+const int stepsPerRevolutionNEMA17 = 200;
+
+const int dirPinNEMA17 = 3;   
+const int stepPinNEMA17 = 4; 
+const int trigPin = 10;       
+const int echoPin = 11;
+const int irSensorPin = 8;     
+const int waterLevelPin = A0;  
+const int pumpPin = 6;         
+const int servoPin = 9;        
+const int heaterPin = 12;      
+const int oneWireBus = 5;      
+
+LiquidCrystal_I2C lcd(0x27, 20, 4);  
+Servo myServo;                   
+
+const byte ROWS = 4;
+const byte COLS = 4;
+char keys[ROWS][COLS] = {
+  { '1', '2', '3', 'A' },
+  { '4', '5', '6', 'B' },
+  { '7', '8', '9', 'C' },
+  { '*', '0', '#', 'D' }
+};
+byte rowPins[ROWS] = { 23, 25, 27, 29 };
+byte colPins[COLS] = { 31, 33, 35, 37 };
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
+
+enum State {
+  STATE_IDLE,
+  CHECK_BOWL,
+  SELECT_PERSON,
+  CHECK_ITEMS,
+  WORK_PUMP,
+  HEATING_WATER,
+  STEPPER_MOTOR,
+  WAITING_COOKING,
+  SERVO_MOTOR,
+  THANK_YOU,
+};
+
+State currentState = STATE_IDLE;
+int selectedPerson = 0;
+String alertMessage = "";
+
+const unsigned long pumpDuration1 = 30000;  
+const unsigned long pumpDuration2 = 50000;  
+unsigned long startTimePump = 0;
+unsigned long startTimeHeat = 0;
+bool pumpRunning = false;
+bool heatingRunning = false;
+bool Nema17Activated = false;
+bool servoActivated = false;       
+unsigned long servoStartTime = 0;  
+
+const int stepDelay = 15;  
+const int angleStep = 1;   
+
+unsigned long cookingStartTime = 0;   
+const unsigned long cookingDuration = 150000;
+
+OneWire oneWire(oneWireBus);
+DallasTemperature sensors(&oneWire);
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  pinMode(irSensorPin, INPUT);
+  pinMode(waterLevelPin, INPUT);
+  pinMode(pumpPin, OUTPUT);
+  pinMode(stepPinNEMA17, OUTPUT);
+  pinMode(dirPinNEMA17, OUTPUT);
+  pinMode(heaterPin, OUTPUT);
+  digitalWrite(heaterPin, HIGH); 
+
+
+  lcd.init();
+  lcd.backlight();
+
+  myServo.attach(servoPin); 
+  myServo.write(0);       
+
+  sensors.begin();
+}
+
+void loop() {
+
+  char key = keypad.getKey();
+
+  // State machine events
+  switch (currentState) {
+    case STATE_IDLE:
+      eventIdle(key);
+      break;
+
+    case CHECK_BOWL:
+      eventCheckBowl();
+      break;
+
+    case SELECT_PERSON:
+      eventSelectPerson(key);
+      break;
+
+    case CHECK_ITEMS:
+      eventCheckItems();
+      break;
+
+    case WORK_PUMP:
+      eventWorkPump();
+      break;
+
+    case HEATING_WATER:
+      eventHeatingWater();
+      break;
+
+    case STEPPER_MOTOR:
+      eventStepperMotor();
+      break;
+
+    case WAITING_COOKING:
+      eventWaitingCooking();
+      break;
+
+    case SERVO_MOTOR:
+      eventServoMotor();
+      break;
+
+    case THANK_YOU:
+      thankYou();
+      break;
+  }
+}
+
+void eventIdle(char key) {
+  lcd.setCursor(0, 0);
+  lcd.print("Press A to start");
+  if (key == 'A') {
+    currentState = CHECK_BOWL;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Checking bowl...");
+  }
+}
+     
+void eventCheckBowl() {
+  if (checkBowl()) {
+    currentState = SELECT_PERSON;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Select Quantity:");
+    lcd.setCursor(0, 1);
+    lcd.print("1 or 2");
+  } else {
+    lcd.setCursor(0, 1);
+    lcd.print("Bowl not detected.");
+    delay(2000); 
+    currentState = STATE_IDLE;
+    lcd.clear();
+  }
+}
+
+void eventSelectPerson(char key) {
+  if (key == '1' || key == '2') {
+    selectedPerson = key - '0';  
+    currentState = CHECK_ITEMS;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Checking items...");
+  }
+}
+
+void eventCheckItems() {
+  if (checkWaterLevel() && checkNoodles()) {
+    currentState = WORK_PUMP;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Items OK.");
+    delay(2000); 
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Starting pump...");
+    startTimePump = millis();
+    pumpRunning = true;
+    digitalWrite(pumpPin, HIGH);
+  } else {
+    lcd.setCursor(0, 1);
+    if (!checkWaterLevel()) {
+      alertMessage = "Refill Water!";
+    } else if (!checkNoodles()) {
+      alertMessage = "Refill Noodles!";
+    }
+    lcd.print(alertMessage);
+    delay(2000);  
+    currentState = STATE_IDLE;
+    lcd.clear();
+  }
+}
+
+void eventWorkPump() {
+
+  if (pumpRunning) {
+    unsigned long currentTimePump = millis();
+    if ((selectedPerson == 1 && currentTimePump - startTimePump >= pumpDuration1) || (selectedPerson == 2 && currentTimePump - startTimePump >= pumpDuration2)) {
+      digitalWrite(pumpPin, LOW);  
+      pumpRunning = false;
+      currentState = HEATING_WATER;
+      heatingRunning = true;
+      startTimeHeat = millis();
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Heating water...");
+      digitalWrite(heaterPin, LOW);
+    }
+  }
+}
+
+void eventHeatingWater() {
+  if (heatingRunning) {
+    sensors.requestTemperatures();                   
+    float temperature = sensors.getTempCByIndex(0);  
+    lcd.setCursor(0, 1);
+    lcd.print("Temp: ");
+    lcd.print(temperature);
+    lcd.print(" C");
+
+    if (temperature >= 60.0) {
+      digitalWrite(heaterPin, HIGH);
+      heatingRunning = false;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Water is Boiled");
+      Nema17Activated = true;
+      currentState = STEPPER_MOTOR;
+    }
+  }
+}
+
+void eventStepperMotor() {
+  static unsigned long stepperStartTime = 0;
+  static unsigned long stepperDuration = 0;
+  static bool stepperStarted = false;
+
+  if (Nema17Activated && !stepperStarted) {
+    digitalWrite(dirPinNEMA17, HIGH);
+    if (selectedPerson == 1) {
+      stepperDuration = 10000;  
+    } else if (selectedPerson == 2) {
+      stepperDuration = 20000;   
+    }
+    stepperStartTime = millis();
+    stepperStarted = true;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Dispensing Noodles.");
+  }
+
+  if (stepperStarted) {
+    unsigned long currentTime = millis();
+    if (currentTime - stepperStartTime >= stepperDuration) {
+      stepperStarted = false;
+      Nema17Activated = false;
+      currentState = WAITING_COOKING;
+      cookingStartTime = millis();
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Waiting for cook");
+      lcd.setCursor(0, 1);
+      lcd.print("time...");
+
+    } else {
+      // Stepper motor movement code here
+      Serial.println(currentTime);
+      digitalWrite(stepPinNEMA17, HIGH);
+      delayMicroseconds(2000);
+      digitalWrite(stepPinNEMA17, LOW);
+      delayMicroseconds(2000);
+    }
+  }
+}
+void eventWaitingCooking() {
+  if (currentState == WAITING_COOKING) {
+    unsigned long currentTime = millis();
+    unsigned long elapsedTime = currentTime - cookingStartTime;
+    unsigned long remainingTime = cookingDuration - elapsedTime;
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Cooking Time:");
+
+    int minutes = remainingTime / 60000;
+    int seconds = (remainingTime % 60000) / 1000;
+
+    lcd.setCursor(0, 1);
+    lcd.print(minutes);
+    lcd.print(":");
+    if (seconds < 10) {
+      lcd.print("0");
+    }
+    lcd.print(seconds);
+
+    if (elapsedTime >= cookingDuration) {
+      currentState = SERVO_MOTOR;
+      servoActivated = true;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Draining Water...");
+    }
+  }
+  delay(1000);
+}
+
+
+void eventServoMotor() {
+  if (servoActivated) {
+    moveServo(0, 180); 
+    delay(180000);    
+    moveServo(180, 0); 
+    servoActivated = false;
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Noodles Ready!");
+    delay(2000);
+    currentState = THANK_YOU;
+  }
+}
+
+bool checkBowl() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH);
+  int distance = duration * 0.034 / 2;
+  return distance <= 25; 
+}
+
+bool checkWaterLevel() {
+  int sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += analogRead(A0);
+    delay(100);
+  }
+  int average = sum / 10;
+  if (average > 450) {
+    return true;
+  } else {
+    return false;
+  }
+}
+  
+
+
+bool checkNoodles() {
+  int irValue = digitalRead(irSensorPin);
+  return irValue == LOW;
+}
+
+void moveServo(int startAngle, int endAngle) {
+  int angleStep = (startAngle < endAngle) ? 1 : -1;
+  for (int angle = startAngle; angle != endAngle; angle += angleStep) {
+    myServo.write(angle);
+    delay(15);
+  }
+}
+
+void thankYou() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Thank You!");
+  delay(2000);
+  currentState = STATE_IDLE;
+}
