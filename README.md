@@ -21,4 +21,5 @@ An Arduino-based machine that automates noodle preparation — from dough pressi
 
 
 
+<img width="520" height="386" alt="image" src="https://github.com/user-attachments/assets/1d94ca3e-351f-4990-b440-050529650ef3" />
 
